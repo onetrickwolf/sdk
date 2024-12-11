@@ -150,7 +150,7 @@
         mainLight.castShadow = true;
         scene.add(mainLight);
 
-        const fillLight = new THREE.DirectionalLight(0x9090ff, 0.4);
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
         fillLight.position.set(-1, 9, -6);
         scene.add(fillLight);
 
@@ -181,7 +181,7 @@
             0xFFFF00,
         ];
 
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 15; i++) {
             const duck = duckModel.clone();
 
             const randomScale = 0.5 + Math.random() * 1;

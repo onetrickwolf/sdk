@@ -6,10 +6,12 @@
     "scripts": {
         "dev": "vite",
         "build": "vite build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "deploy": "gh-pages -d dist"
     },
     "devDependencies": {
         "@provablehq/sdk": "^0.7.0",
+        "gh-pages": "^6.2.0",
         "tslib": "^2.6.2",
         "vite": "^4.4.12"
     }

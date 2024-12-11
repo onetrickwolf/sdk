@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Claw Machine Game</title>
+    <style>
+        body { margin: 0; }
+        .view-container {
+            display: flex;
+            height: 100vh;
+        }
+        #mainView {
+            flex: 2;
+            height: 100%;
+        }
+        #topView {
+            flex: 1;
+            height: 100%;
+        }
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.5);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .score {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+        }
+    </style>
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
+  <script type="module" crossorigin src="/assets/index-c1dc80a0.js"></script>
+  <link rel="stylesheet" href="/assets/index-48a8825f.css">
+</head>
+<body>
+<div class="view-container">
+    <div id="mainView"></div>
+    <div id="topView"></div>
+</div>
+<div class="controls">
+    Click and drag to move claw | Press SPACE to drop
+</div>
+<div class="score">
+    Ducks Score: <span id="scoreValue">0</span>
+</div>
+<div class="loading" id="loadingScreen">
+    Loading Ducks...
+</div>
+<script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+
+
+
+</body>
+</html>

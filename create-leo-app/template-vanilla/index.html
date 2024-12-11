@@ -35,6 +35,17 @@
             padding: 10px;
             border-radius: 5px;
         }
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -46,60 +57,107 @@
     Click and drag to move claw | Press SPACE to drop
 </div>
 <div class="score">
-    Prizes Collected: <span id="scoreValue">0</span>
+    Ducks Score: <span id="scoreValue">0</span>
 </div>
+<div class="loading" id="loadingScreen">
+    Loading Ducks...
+</div>
+<script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
 <script type="module">
-    import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.1/three.module.min.js';
+    import * as THREE from 'three';
+    import { TextureLoader } from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    let cameraAngle = 0;
+    let cameraRadius = 12;
+    let cameraRotationSpeed = 0.001;
 
     let mainCamera, topCamera, scene, renderer;
     let claw, clawBase, prizes = [];
     let isDragging = false;
-    let mouseX = 0, mouseY = 0;
-    let clawState = 'idle'; // idle, dropping, rising, holding
+    let clawState = 'idle';
     let clawSpeed = 0.05;
     let initialClawHeight = 5;
     let score = 0;
     let heldPrize = null;
     let clawBox = new THREE.Box3();
     let prizeBoxes = [];
+    let duckModel = null;
 
-    init();
-    animate();
+    const duckPhysics = [];
+    const BOUNCE_FACTOR = 5;
+    const FRICTION = 0.98;
+    const MOVEMENT_SPEED = 0.03;
+    const MIN_VELOCITY = 0.001;
+    const CABINET_SIZE = 5.5;
+
+    document.getElementById('loadingScreen').style.display = 'block';
+
+    const loader = new GLTFLoader();
+    loader.load(
+        'https://raw.githubusercontent.com/alteous/glTF-Sample-Models-Official/master/2.0/Duck/glTF/Duck.gltf',
+        function (gltf) {
+            duckModel = gltf.scene;
+            document.getElementById('loadingScreen').style.display = 'none';
+            init();
+            animate();
+        },
+        function (xhr) {
+            console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+        },
+        function (error) {
+            console.error('Error loading duck:', error);
+            alert('Error loading duck model. Please refresh the page.');
+        }
+    );
 
     function init() {
-        // Scene setup
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
 
-        // Renderer
-        renderer = new THREE.WebGLRenderer();
+        renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            physicallyCorrectLights: true
+        });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.autoClear = false;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        renderer.outputEncoding = THREE.sRGBEncoding;
         document.getElementById('mainView').appendChild(renderer.domElement);
 
-        // Main camera
         mainCamera = new THREE.PerspectiveCamera(75, (window.innerWidth * 2/3) / window.innerHeight, 0.1, 1000);
         mainCamera.position.set(0, 8, 12);
         mainCamera.lookAt(0, 0, 0);
 
-        // Top camera
         topCamera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
         topCamera.position.set(0, 20, 0);
         topCamera.lookAt(0, 0, 0);
 
-        // Lights
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
 
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(10, 20, 10);
-        scene.add(directionalLight);
+        const mainLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        mainLight.position.set(-5, 10, 5);
+        mainLight.castShadow = true;
+        scene.add(mainLight);
+
+        const fillLight = new THREE.DirectionalLight(0x9090ff, 0.4);
+        fillLight.position.set(-1, 9, -6);
+        scene.add(fillLight);
 
         createCabinet();
         createClaw();
         createPrizes();
 
-        // Event listeners
         window.addEventListener('mousedown', onMouseDown);
         window.addEventListener('mousemove', onMouseMove);
         window.addEventListener('mouseup', onMouseUp);
@@ -107,22 +165,118 @@
         window.addEventListener('resize', onWindowResize);
     }
 
+    function initDuckPhysics(duck) {
+        return {
+            velocity: new THREE.Vector3(
+                (Math.random() - 0.5) * MOVEMENT_SPEED,
+                0,
+                (Math.random() - 0.5) * MOVEMENT_SPEED
+            ),
+            angularVelocity: (Math.random() - 0.5) * 0.02
+        };
+    }
+
+    function createPrizes() {
+        const duckColors = [
+            0xFFFF00,
+        ];
+
+        for (let i = 0; i < 10; i++) {
+            const duck = duckModel.clone();
+
+            const randomScale = 0.5 + Math.random() * 1;
+            duck.scale.set(randomScale, randomScale, randomScale);
+
+            duck.position.x = (Math.random() - 0.5) * 8;
+            duck.position.y = 0.5;
+            duck.position.z = (Math.random() - 0.5) * 8;
+            duck.rotation.y = Math.random() * Math.PI * 2;
+
+            const randomColor = duckColors[Math.floor(Math.random() * duckColors.length)];
+            duck.traverse((child) => {
+                if (child.isMesh) {
+                    child.material = child.material.clone();
+                    child.material.color.setHex(randomColor);
+                    child.material.metalness = 0.3;
+                    child.material.roughness = 0.4;
+                }
+            });
+
+            duck.userData.value = Math.round(100 * (1/randomScale));
+            duck.userData.isCollected = false;
+
+            prizes.push(duck);
+            prizeBoxes.push(new THREE.Box3().setFromObject(duck));
+            duckPhysics.push(initDuckPhysics(duck));
+            scene.add(duck);
+        }
+    }
+
     function createCabinet() {
         const wallGeometry = new THREE.BoxGeometry(12, 10, 12);
-        const wallMaterial = new THREE.MeshPhongMaterial({
-            color: 0x8B4513,
+        const wallMaterial = new THREE.MeshPhysicalMaterial({
+            color: 0xFF00FF,
             transparent: true,
-            opacity: 0.3
+            opacity: 0.2,
         });
         const cabinet = new THREE.Mesh(wallGeometry, wallMaterial);
         cabinet.position.y = 5;
         scene.add(cabinet);
 
         const baseGeometry = new THREE.BoxGeometry(12, 1, 12);
-        const baseMaterial = new THREE.MeshPhongMaterial({ color: 0x8B4513 });
+        const baseMaterial = new THREE.MeshPhysicalMaterial({
+            color: 0xFF00FF,
+            roughness: 0.3,
+            metalness: 0.4,
+            clearcoat: 0.5
+        });
         const base = new THREE.Mesh(baseGeometry, baseMaterial);
         base.position.y = -0.5;
         scene.add(base);
+
+        // Function to create and position a logo
+        function createLogo(url, width, height, posX, posY, posZ) {
+            const textureLoader = new TextureLoader();
+            textureLoader.load(
+                url,
+                function(texture) {
+                    const logoGeometry = new THREE.PlaneGeometry(width, height);
+                    const logoMaterial = new THREE.MeshBasicMaterial({
+                        map: texture,
+                        transparent: true,
+                        depthWrite: false
+                    });
+                    const logo = new THREE.Mesh(logoGeometry, logoMaterial);
+                    logo.position.set(posX, posY, posZ);
+                    logo.rotation.x = -Math.PI / 2;
+                    scene.add(logo);
+                },
+                undefined,
+                function(error) {
+                    console.error('Error loading logo texture:', error);
+                }
+            );
+        }
+
+        // Create first logo
+        createLogo(
+            'https://ucaaefca728a75cf6c660350d0ec.previews.dropboxusercontent.com/p/thumb/ACclaBi3E75ZJ5Vauf6pNdIo45vvv24uYb9e5w7Te6KW-vJfrYVxowg5Xq55QqpuhEDGfyzr4WkeN7E4g3Rdu49mg_OGJoijz0l-tuLUUPdonVO_R8MYkmtrzTgIXgcwgl1ZHOatOpBTSFDbQ0qFkXg6C84y_V_89qsyC9QiiB7d_t5d2Wi_z4A-k9D4LL-q7RadJjtT_dcAuh5LS3v1oj1yHtr5y2qe5-nL0gVxeHC9nonyOaUvBoLYR5TDmI_Uh61A503UEeiNOL0Bbm6Hp-rPlEu7ZjadtSUNfwhohQY8YYNUbsa_pdNoG0-WaPrblPGmw--Y8aThwzNgVRmxkkQw/p.png',
+            10,  // width
+            2,   // height
+            0,   // posX
+            0.1,// posY
+            3    // posZ
+        );
+
+        // Create second logo
+        createLogo(
+            'https://upload.wikimedia.org/wikipedia/commons/5/58/Dave_%26_Buster%27s_2014.svg',
+            5,  // width
+            5,   // height
+            0,   // posX
+            0.1,// posY
+            -2   // posZ
+        );
     }
 
     function createClaw() {
@@ -150,41 +304,61 @@
         scene.add(clawBase);
     }
 
-    function createPrizes() {
-        const prizeGeometries = [
-            new THREE.SphereGeometry(0.5),
-            new THREE.BoxGeometry(0.8, 0.8, 0.8),
-            new THREE.ConeGeometry(0.4, 1, 8)
-        ];
+    function updateDuckPhysics() {
+        prizes.forEach((duck, index) => {
+            if (!duck.userData.isCollected && !duck.userData.isHeld) {
+                const physics = duckPhysics[index];
 
-        const prizeMaterials = [
-            new THREE.MeshPhongMaterial({ color: 0xff0000 }),
-            new THREE.MeshPhongMaterial({ color: 0x00ff00 }),
-            new THREE.MeshPhongMaterial({ color: 0x0000ff })
-        ];
+                duck.position.x += physics.velocity.x;
+                duck.position.z += physics.velocity.z;
 
-        for (let i = 0; i < 10; i++) {
-            const randomIndex = Math.floor(Math.random() * prizeGeometries.length);
-            const prize = new THREE.Mesh(
-                prizeGeometries[randomIndex],
-                prizeMaterials[randomIndex]
-            );
+                duck.rotation.y += physics.angularVelocity;
 
-            prize.position.x = (Math.random() - 0.5) * 8;
-            prize.position.y = 0.5;
-            prize.position.z = (Math.random() - 0.5) * 8;
-            prize.userData.value = (randomIndex + 1) * 100; // Prize value
-            prize.userData.isCollected = false;
+                if (Math.abs(duck.position.x) > CABINET_SIZE) {
+                    duck.position.x = Math.sign(duck.position.x) * CABINET_SIZE;
+                    physics.velocity.x *= (-BOUNCE_FACTOR * 0.5);
+                }
+                if (Math.abs(duck.position.z) > CABINET_SIZE) {
+                    duck.position.z = Math.sign(duck.position.z) * CABINET_SIZE;
+                    physics.velocity.z *= (-BOUNCE_FACTOR * 0.5);
+                }
 
-            prizes.push(prize);
-            prizeBoxes.push(new THREE.Box3().setFromObject(prize));
-            scene.add(prize);
-        }
+                prizes.forEach((otherDuck, otherIndex) => {
+                    if (index !== otherIndex && !otherDuck.userData.isCollected && !otherDuck.userData.isHeld) {
+                        const dx = duck.position.x - otherDuck.position.x;
+                        const dz = duck.position.z - otherDuck.position.z;
+                        const distance = Math.sqrt(dx * dx + dz * dz);
+
+                        if (distance < 1) {
+                            const angle = Math.atan2(dz, dx);
+                            const velocityExchange = 0.1;
+
+                            physics.velocity.x = Math.cos(angle) * velocityExchange;
+                            physics.velocity.z = Math.sin(angle) * velocityExchange;
+                            duckPhysics[otherIndex].velocity.x = -Math.cos(angle) * velocityExchange;
+                            duckPhysics[otherIndex].velocity.z = -Math.sin(angle) * velocityExchange;
+
+                            duck.position.x += Math.cos(angle) * 0.1;
+                            duck.position.z += Math.sin(angle) * 0.1;
+                        }
+                    }
+                });
+
+                physics.velocity.x *= FRICTION;
+                physics.velocity.z *= FRICTION;
+                physics.angularVelocity *= FRICTION;
+
+                if (Math.abs(physics.velocity.x) < MIN_VELOCITY &&
+                    Math.abs(physics.velocity.z) < MIN_VELOCITY) {
+                    physics.velocity.x += (Math.random() - 0.5) * MOVEMENT_SPEED;
+                    physics.velocity.z += (Math.random() - 0.5) * MOVEMENT_SPEED;
+                }
+            }
+        });
     }
 
     function checkCollision() {
         clawBox.setFromObject(claw);
-
         for (let i = 0; i < prizes.length; i++) {
             const prize = prizes[i];
             if (!prize.userData.isCollected) {
@@ -209,11 +383,17 @@
 
     function collectPrize() {
         if (heldPrize) {
+            createExplosion(heldPrize.position.clone());
+            const audio = new Audio('/large-underwater-explosion-190270.mp3');
+            audio.volume = 0.3;
+            audio.play().catch(e => console.log('Audio play failed:', e));
+
             score += heldPrize.userData.value;
             document.getElementById('scoreValue').textContent = score;
             heldPrize.userData.isCollected = true;
             scene.remove(heldPrize);
             heldPrize = null;
+            window.execute();
         }
     }
 
@@ -262,20 +442,92 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
+    // Add after the initial variable declarations:
+    let particles = [];
+    const PARTICLE_COUNT = 30;
+    const EXPLOSION_FORCE = 0.3;
+    const PARTICLE_GRAVITY = 0.01;
+
+    // Add this function to create a single particle
+    function createParticle(position) {
+        const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const material = new THREE.MeshPhongMaterial({
+            color: new THREE.Color().setHSL(Math.random(), 1, 0.5),
+            emissive: new THREE.Color().setHSL(Math.random(), 1, 0.5)
+        });
+        const particle = new THREE.Mesh(geometry, material);
+
+        particle.position.copy(position);
+        particle.velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * EXPLOSION_FORCE,
+            Math.random() * EXPLOSION_FORCE,
+            (Math.random() - 0.5) * EXPLOSION_FORCE
+        );
+        particle.lifetime = 60; // frames the particle will live
+
+        scene.add(particle);
+        particles.push(particle);
+    }
+
+    // Add this function to create the explosion effect
+    function createExplosion(position) {
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            createParticle(position);
+        }
+    }
+
+    function updateParticles() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            const particle = particles[i];
+
+            // Update position
+            particle.position.add(particle.velocity);
+
+            // Apply gravity
+            particle.velocity.y -= PARTICLE_GRAVITY;
+
+            // Rotate particle
+            particle.rotation.x += 0.1;
+            particle.rotation.y += 0.1;
+
+            // Fade out
+            particle.material.opacity = particle.lifetime / 60;
+
+            // Update lifetime
+            particle.lifetime--;
+
+            // Remove dead particles
+            if (particle.lifetime <= 0) {
+                scene.remove(particle);
+                particles.splice(i, 1);
+            }
+        }
+    }
+
     function animate() {
         requestAnimationFrame(animate);
+        updateParticles();
 
-        // Update claw state and check for collisions
+        updateDuckPhysics();
+
+        cameraAngle = Math.sin(Date.now() * 0.001) * (Math.PI / 12);
+        const baseX = 0;
+        const baseZ = 12;
+        mainCamera.position.x = baseX + Math.sin(cameraAngle) * cameraRadius;
+        mainCamera.position.z = baseZ + Math.cos(cameraAngle) * cameraRadius - cameraRadius;
+        mainCamera.position.y = 8;
+        mainCamera.lookAt(0, 0, 0);
+
         if (clawState === 'dropping') {
             clawBase.position.y -= clawSpeed;
             if (clawBase.position.y <= 1) {
                 const collidedPrize = checkCollision();
                 if (collidedPrize) {
                     heldPrize = collidedPrize;
+                    heldPrize.userData.isHeld = true;
                     clawState = 'holding';
                 }
                 clawState = 'rising';
-                // Close claw
                 claw.children.forEach(arm => {
                     arm.rotation.x = Math.PI / 4;
                 });
@@ -290,41 +542,36 @@
                     collectPrize();
                 }
                 clawState = 'idle';
-                // Open claw
                 claw.children.forEach(arm => {
                     arm.rotation.x = 0;
                 });
             }
         }
 
-        // Calculate square viewport dimensions
         const totalWidth = window.innerWidth;
         const height = window.innerHeight;
 
-        // Main view (left side - 2/3 width)
         const mainViewWidth = totalWidth * 2/3;
         const mainViewSize = Math.min(mainViewWidth, height);
         const mainViewX = (mainViewWidth - mainViewSize) / 2;
         const mainViewY = (height - mainViewSize) / 2;
 
-        // Top view (right side - 1/3 width)
         const topViewWidth = totalWidth * 1/3;
         const topViewSize = Math.min(topViewWidth, height);
         const topViewX = mainViewWidth + (topViewWidth - topViewSize) / 2;
         const topViewY = (height - topViewSize) / 2;
 
-        // Render main view
         renderer.setViewport(mainViewX, mainViewY, mainViewSize, mainViewSize);
         renderer.setScissor(mainViewX, mainViewY, mainViewSize, mainViewSize);
         renderer.setScissorTest(true);
         renderer.render(scene, mainCamera);
 
-        // Render top view
         renderer.setViewport(topViewX, topViewY, topViewSize, topViewSize);
         renderer.setScissor(topViewX, topViewY, topViewSize, topViewSize);
         renderer.setScissorTest(true);
         renderer.render(scene, topCamera);
     }
 </script>
+<script type="module" src="/main.js"></script>
 </body>
 </html>
